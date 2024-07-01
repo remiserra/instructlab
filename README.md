@@ -1,3 +1,29 @@
+
+# Experimental Fork
+
+This is my fork to experiment with various modifications of [instructlab](https://github.com/instructlab/instructlab)
+
+## Install this fork
+
+From github:
+```sh
+mkdir instructlab_app
+virtualenv -p python3.11 virtualenv
+pip install git+https://github.com/remiserra/instructlab@main
+```
+
+From local clone, to experiment locally:
+```sh
+git clone https://github.com/remiserra/instructlab.git
+mkdir instructlab_app
+virtualenv -p python3.11 virtualenv
+pip install ../instructlab/
+```
+
+pip install ../github-remi-instructlab/     
+
+# Original Readme:
+
 # InstructLab 🐶 (`ilab`)
 
 ![Lint](https://github.com/instructlab/instructlab/actions/workflows/lint.yml/badge.svg?branch=main)
@@ -8,35 +34,45 @@
 
 ## 📖 Contents
 
-- [Welcome to the InstructLab CLI](#welcome-to-the-instructlab-cli)
-- [🎺 What's New](#-whats-new)
-- [❓ What is `ilab`](#-what-is-ilab)
-- [📋 Requirements](#-requirements)
-- [✅ Getting started](#-getting-started)
-  - [🧰 Installing `ilab`](#-installing-ilab)
-    - [Install with no GPU acceleration and PyTorch without CUDA bindings](#install-using-pytorch-without-cuda-bindings-and-no-gpu-acceleration)
-    - [Install with AMD ROCm](#install-with-amd-rocm)
-    - [Install with Apple Metal on M1/M2/M3 Macs](#install-with-apple-metal-on-m1m2m3-macs)
-    - [Install with Nvidia CUDA](#install-with-nvidia-cuda)
-  - [🏗️ Initialize `ilab`](#️-initialize-ilab)
-  - [📥 Download the model](#-download-the-model)
-  - [🍴 Serving the model](#-serving-the-model)
-  - [📣 Chat with the model (Optional)](#-chat-with-the-model-optional)
-- [💻 Creating new knowledge or skills and training the model](#-creating-new-knowledge-or-skills-and-training-the-model)
-  - [🎁 Contribute knowledge or compositional skills](#-contribute-knowledge-or-compositional-skills)
-  - [📜 List and validate your new data](#-list-and-validate-your-new-data)
-  - [🚀 Generate a synthetic dataset](#-generate-a-synthetic-dataset)
-  - [👩‍🏫 Training the model](#-training-the-model)
-    - [Train the model locally on Linux](#train-the-model-locally-on-linux)
-    - [Train the model locally on M-series Macs](#train-the-model-locally-on-an-m-series-mac)
-    - [Train the model locally with GPU acceleration](#train-the-model-locally-with-gpu-acceleration)
-    - [Train the model in the cloud](#train-the-model-in-the-cloud)
-  - [📜 Test the newly trained model](#-test-the-newly-trained-model)
-  - [🍴 Serve the newly trained model](#-serve-the-newly-trained-model)
-- [📣 Chat with the new model (not optional this time)](#-chat-with-the-new-model-not-optional-this-time)
-- [🚀 Upgrade InstructLab to latest version](#-upgrade-instructlab-to-latest-version)
-- [🎁 Submit your new knowledge or skills](#-submit-your-new-knowledge-or-skills)
-- [📬 Contributing](#-contributing)
+- [Experimental Fork](#experimental-fork)
+  - [Install this fork](#install-this-fork)
+- [Original Readme:](#original-readme)
+- [InstructLab 🐶 (`ilab`)](#instructlab--ilab)
+  - [📖 Contents](#-contents)
+  - [Welcome to the InstructLab CLI](#welcome-to-the-instructlab-cli)
+  - [🎺 What's new](#-whats-new)
+  - [❓ What is `ilab`](#-what-is-ilab)
+  - [📋 Requirements](#-requirements)
+  - [✅ Getting started](#-getting-started)
+    - [🧰 Installing `ilab`](#-installing-ilab)
+      - [Install using PyTorch without CUDA bindings and no GPU acceleration](#install-using-pytorch-without-cuda-bindings-and-no-gpu-acceleration)
+      - [Install with AMD ROCm](#install-with-amd-rocm)
+      - [Install with Apple Metal on M1/M2/M3 Macs](#install-with-apple-metal-on-m1m2m3-macs)
+      - [Install with Nvidia CUDA](#install-with-nvidia-cuda)
+      - [Bash (version 4.4 or newer)](#bash-version-44-or-newer)
+      - [Zsh](#zsh)
+      - [Fish](#fish)
+    - [🏗️ Initialize `ilab`](#️-initialize-ilab)
+    - [📥 Download the model](#-download-the-model)
+      - [Downloading a specific model from a Hugging Face repository](#downloading-a-specific-model-from-a-hugging-face-repository)
+      - [Downloading an entire Hugging Face repository](#downloading-an-entire-hugging-face-repository)
+    - [🍴 Serving the model](#-serving-the-model)
+    - [📣 Chat with the model (Optional)](#-chat-with-the-model-optional)
+  - [💻 Creating new knowledge or skills and training the model](#-creating-new-knowledge-or-skills-and-training-the-model)
+    - [🎁 Contribute knowledge or compositional skills](#-contribute-knowledge-or-compositional-skills)
+    - [📜 List and validate your new data](#-list-and-validate-your-new-data)
+    - [🚀 Generate a synthetic dataset](#-generate-a-synthetic-dataset)
+    - [👩‍🏫 Training the model](#-training-the-model)
+      - [Train the model locally on Linux](#train-the-model-locally-on-linux)
+      - [Train the model locally on an M-series Mac](#train-the-model-locally-on-an-m-series-mac)
+      - [Train the model locally with GPU acceleration](#train-the-model-locally-with-gpu-acceleration)
+      - [Train the model in the cloud](#train-the-model-in-the-cloud)
+    - [📜 Test the newly trained model](#-test-the-newly-trained-model)
+    - [🍴 Serve the newly trained model](#-serve-the-newly-trained-model)
+  - [📣 Chat with the new model (not optional this time)](#-chat-with-the-new-model-not-optional-this-time)
+  - [🚀 Upgrade InstructLab to latest version](#-upgrade-instructlab-to-latest-version)
+  - [🎁 Submit your new knowledge or skills](#-submit-your-new-knowledge-or-skills)
+  - [📬 Contributing](#-contributing)
 
 ## Welcome to the InstructLab CLI
 
