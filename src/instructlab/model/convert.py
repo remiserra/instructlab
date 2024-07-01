@@ -44,6 +44,12 @@ logger = logging.getLogger(__name__)
     default=None,
     show_default=True,
 )
+@click.option(
+    "-k",
+    "--keep-files",
+    is_flag=True,
+    help="Keep intermediary files.",
+)
 @utils.macos_requirement(echo_func=click.secho, exit_exception=click.exceptions.Exit)
 @click.pass_context
 @utils.display_params
@@ -54,6 +60,7 @@ def convert(
     skip_de_quantize,
     skip_quantize,
     model_name,
+    keep_files,
 ):
     """Converts model to GGUF"""
     # pylint: disable=C0415
@@ -91,8 +98,9 @@ def convert(
         )
         raise click.exceptions.Exit(1)
 
-    logger.info(f"deleting {source_model_dir}...")
-    shutil.rmtree(source_model_dir)
+    if not keep_files:
+        logger.info(f"deleting {source_model_dir}...")
+        shutil.rmtree(source_model_dir)
 
     model_dir_fused_pt = f"{model_name}-trained"
     # this converts MLX to PyTorch
@@ -100,8 +108,9 @@ def convert(
         hf_path=model_dir_fused, mlx_path=model_dir_fused_pt, local=True, to_pt=True
     )
 
-    logger.info(f"deleting {model_dir_fused}...")
-    shutil.rmtree(model_dir_fused)
+    if not keep_files:
+        logger.info(f"deleting {model_dir_fused}...")
+        shutil.rmtree(model_dir_fused)
 
     convert_llama_to_gguf(
         model=Path(model_dir_fused_pt),
@@ -110,9 +119,10 @@ def convert(
         outfile=f"{model_dir_fused_pt}/{model_name}.gguf",
     )
 
-    logger.info(f"deleting safetensors files from {model_dir_fused_pt}...")
-    for file in glob(os.path.join(model_dir_fused_pt, "*.safetensors")):
-        os.remove(file)
+    if not keep_files:
+        logger.info(f"deleting safetensors files from {model_dir_fused_pt}...")
+        for file in glob(os.path.join(model_dir_fused_pt, "*.safetensors")):
+            os.remove(file)
 
     # quantize to 4-bit GGUF (optional)
     if not skip_quantize:
@@ -120,5 +130,6 @@ def convert(
         gguf_model_q_dir = f"{model_dir_fused_pt}/{model_name}-Q4_K_M.gguf"
         run_quantize(gguf_model_dir, gguf_model_q_dir, "Q4_K_M")
 
-    logger.info(f"deleting {model_dir_fused_pt}/{model_name}.gguf...")
-    os.remove(os.path.join(model_dir_fused_pt, f"{model_name}.gguf"))
+    if not keep_files:
+        logger.info(f"deleting {model_dir_fused_pt}/{model_name}.gguf...")
+        os.remove(os.path.join(model_dir_fused_pt, f"{model_name}.gguf"))
