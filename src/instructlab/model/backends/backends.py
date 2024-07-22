@@ -1,9 +1,12 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # Standard
-from time import sleep
+from time import sleep, time
+from types import FrameType
 from typing import Optional, Tuple
 import abc
+import contextlib
+import json
 import logging
 import mmap
 import multiprocessing
@@ -13,22 +16,29 @@ import socket
 import struct
 import subprocess
 import sys
+import typing
 
 # Third Party
 from uvicorn import Config
 import click
+import fastapi
+import httpx
 import uvicorn
 
 # Local
-from ...client import ClientException, list_models
+from ...client import check_api_base
 from ...configuration import _serve as serve_config
-from ...configuration import get_api_base
+from ...configuration import get_api_base, get_model_family
 from ...utils import split_hostport
+
+logger = logging.getLogger(__name__)
 
 LLAMA_CPP = "llama-cpp"
 VLLM = "vllm"
 SUPPORTED_BACKENDS = frozenset({LLAMA_CPP, VLLM})
 API_ROOT_WELCOME_MESSAGE = "Hello from InstructLab! Visit us at https://instructlab.ai"
+CHAT_TEMPLATE_AUTO = "auto"
+CHAT_TEMPLATE_TOKENIZER = "tokenizer"
 templates = [
     {
         "model": "merlinite",
@@ -41,6 +51,10 @@ templates = [
 ]
 
 
+class Closeable(typing.Protocol):
+    def close(self) -> None: ...
+
+
 class ServerException(Exception):
     """An exception raised when serving the API."""
 
@@ -48,8 +62,7 @@ class ServerException(Exception):
 class UvicornServer(uvicorn.Server):
     """Override uvicorn.Server to handle SIGINT."""
 
-    def handle_exit(self, sig, frame):
-        # type: (int, Optional[FrameType]) -> None
+    def handle_exit(self, sig: int, frame: Optional[FrameType]) -> None:
         if not is_temp_server_running() or sig != signal.SIGINT:
             super().handle_exit(sig=sig, frame=frame)
 
@@ -59,30 +72,87 @@ class BackendServer(abc.ABC):
 
     def __init__(
         self,
-        logger: logging.Logger,
+        model_family: str,
         model_path: pathlib.Path,
+        chat_template: str,
         api_base: str,
         host: str,
         port: int,
     ) -> None:
-        self.logger = logger
+        self.model_family = model_family
         self.model_path = model_path
+        self.chat_template = chat_template if chat_template else CHAT_TEMPLATE_AUTO
         self.api_base = api_base
         self.host = host
         self.port = port
-        self.process = None
+        self.resources: list[Closeable] = []
 
     @abc.abstractmethod
     def run(self):
         """Run serving backend in foreground (ilab model serve)"""
 
     @abc.abstractmethod
-    def run_detached(self, http_client):
+    def run_detached(
+        self, http_client: httpx.Client | None = None, background: bool = True
+    ) -> str:
         """Run serving backend in background ('ilab model chat' when server is not running)"""
 
-    @abc.abstractmethod
     def shutdown(self):
         """Shutdown serving backend"""
+
+        safe_close_all(self.resources)
+
+    def register_resources(self, resources: typing.Iterable[Closeable]) -> None:
+        self.resources.extend(resources)
+
+
+def safe_close_all(resources: typing.Iterable[Closeable]):
+    for resource in resources:
+        with contextlib.suppress(Exception):
+            resource.close()
+
+
+def is_model_safetensors(model_path: pathlib.Path) -> bool:
+    """Check if model_path is a valid safe tensors directory
+
+    Check if provided path to model represents directory containing a safetensors representation
+    of a model. Directory must contain a specific set of files to qualify as a safetensors model directory
+    Args:
+        model_path (Path): The path to the model directory
+    Returns:
+        bool: True if the model is a safetensors model, False otherwise.
+    """
+    try:
+        files = list(model_path.iterdir())
+    except (FileNotFoundError, NotADirectoryError, PermissionError) as e:
+        logger.debug("Failed to read directory: %s", e)
+        return False
+
+    if not any(file.suffix == ".safetensors" for file in files):
+        logger.debug("'%s' has no *.safetensors files", model_path)
+        return False
+
+    basenames = {file.name for file in files}
+    requires_files = {
+        "config.json",
+        "tokenizer.json",
+        "tokenizer_config.json",
+    }
+    diff = requires_files.difference(basenames)
+    if diff:
+        logger.debug("'%s' is missing %s", model_path, diff)
+        return False
+
+    for file in model_path.glob("*.json"):
+        try:
+            with file.open(encoding="utf-8") as f:
+                json.load(f)
+        except (PermissionError, json.JSONDecodeError) as e:
+            logger.debug("'%s' is not a valid JSON file: e", file, e)
+            return False
+
+    # TODO: add check for safetensors file header (?)
+    return True
 
 
 def is_model_gguf(model_path: pathlib.Path) -> bool:
@@ -93,7 +163,6 @@ def is_model_gguf(model_path: pathlib.Path) -> bool:
     Returns:
         bool: True if the file is a GGUF file, False otherwise.
     """
-    # pylint: disable=import-outside-toplevel
     # Third Party
     from gguf.constants import GGUF_MAGIC
 
@@ -105,7 +174,7 @@ def is_model_gguf(model_path: pathlib.Path) -> bool:
         first_four_bytes = mmapped_file.read(4)
 
         # Convert the first four bytes to an integer
-        first_four_bytes_int = struct.unpack("<I", first_four_bytes)[0]
+        first_four_bytes_int = int(struct.unpack("<I", first_four_bytes)[0])
 
         # Close the memory-mapped file
         mmapped_file.close()
@@ -113,35 +182,35 @@ def is_model_gguf(model_path: pathlib.Path) -> bool:
         return first_four_bytes_int == GGUF_MAGIC
 
 
-def validate_backend(backend: str) -> None:
-    """
-    Validate the backend.
-    Args:
-        backend (str): The backend to validate.
-    Raises:
-        ValueError: If the backend is not supported.
-    """
-    # lowercase backend for comparison in case of user input like 'Llama'
-    if backend.lower() not in SUPPORTED_BACKENDS:
-        raise ValueError(
-            f"Backend '{backend}' is not supported. Supported: {', '.join(SUPPORTED_BACKENDS)}"
-        )
-
-
-def determine_backend(model_path: pathlib.Path) -> str:
+def determine_backend(model_path: pathlib.Path) -> Tuple[str, str]:
     """
     Determine the backend to use based on the model file properties.
     Args:
-        model_path (Path): The path to the model file.
+        model_path (Path): The path to the model file/directory.
     Returns:
-        str: The backend to use.
+        Tuple[str, str]: A tuple containing two strings:
+                        - The backend to use.
+                        - The reason why the backend was selected.
     """
+    try:
+        if model_path.is_dir() and is_model_safetensors(model_path):
+            if sys.platform == "linux":
+                logger.debug(
+                    f"Model is huggingface safetensors and system is Linux, using {VLLM} backend."
+                )
+                return (
+                    VLLM,
+                    "model path is a directory containing huggingface safetensors files and running on Linux.",
+                )
+            raise ValueError(
+                "Model is a directory containing huggingface safetensors files but the system is not Linux. "
+                "Using a directory with safetensors file will activate the vLLM serving backend, vLLM is only supported on Linux. "
+                "If you want to run the model on a different system (e.g. macOS), please use a GGUF file."
+            )
+    except Exception as e:
+        raise ValueError from e
+
     # Check if the model is a GGUF file
-
-    # If the model is a directory, it's a VLLM model - it's kinda weak, but it's a start
-    if model_path.is_dir() and sys.platform == "linux":
-        return VLLM
-
     try:
         is_gguf = is_model_gguf(model_path)
     except Exception as e:
@@ -150,16 +219,20 @@ def determine_backend(model_path: pathlib.Path) -> str:
         ) from e
 
     if is_gguf:
-        return LLAMA_CPP
+        logger.debug(f"Model is a GGUF file, using {LLAMA_CPP} backend.")
+        return LLAMA_CPP, "model is a GGUF file."
 
-    raise ValueError(f"The model file {model_path} is not a GGUF format. Unsupported.")
+    raise ValueError(
+        f"The model file {model_path} is not a GGUF format nor a directory containing huggingface safetensors files. Cannot determine which backend to use. \n"
+        f"Please use a GGUF file for {LLAMA_CPP} or a directory containing huggingface safetensors files for {VLLM}. \n"
+        "Note that vLLM is only supported on Linux."
+    )
 
 
-def get(logger: logging.Logger, model_path: pathlib.Path, backend: str) -> str:
+def get(model_path: pathlib.Path, backend: str | None) -> str:
     """
     Get the backend to use based on the model file properties.
     Args:
-        logger (Logger): The logger to use.
         model_path (Path): The path to the model file.
         backend (str): The backend that might have been pass to the CLI or set in config file.
     Returns:
@@ -167,13 +240,18 @@ def get(logger: logging.Logger, model_path: pathlib.Path, backend: str) -> str:
     """
     # Check if the model is a GGUF file
     logger.debug(f"Auto-detecting backend for model {model_path}")
-    auto_detected_backend = determine_backend(model_path)
+    try:
+        auto_detected_backend, auto_detected_backend_reason = determine_backend(
+            model_path
+        )
+    except ValueError as e:
+        raise ValueError(f"Cannot determine which backend to use: {e}") from e
 
     logger.debug(f"Auto-detected backend: {auto_detected_backend}")
     # When the backend is not set using the --backend flag, determine the backend automatically
     # 'backend' is optional so we still check for None or empty string in case 'config.yaml' hasn't
     # been updated via 'ilab config init'
-    if backend is None or backend == "":
+    if backend is None:
         logger.debug(
             f"Backend is not set using auto-detected value: {auto_detected_backend}"
         )
@@ -181,22 +259,23 @@ def get(logger: logging.Logger, model_path: pathlib.Path, backend: str) -> str:
     # If the backend was set using the --backend flag, validate it.
     else:
         logger.debug(f"Validating '{backend}' backend")
-        validate_backend(backend)
-        # TODO: keep this code logic and implement a `--force` flag to override the auto-detected backend
         # If the backend was set explicitly, but we detected the model should use a different backend, raise an error
-        # if backend != auto_detected_backend:
-        #     raise ValueError(
-        #         f"The backend '{backend}' was set explicitly, but the model was detected as '{auto_detected_backend}'."
-        #     )
+        if backend != auto_detected_backend:
+            logger.warning(
+                f"The serving backend '{backend}' was configured explicitly, but the provided model is not compatible with it. "
+                f"The model was detected as '{auto_detected_backend}, reason: {auto_detected_backend_reason}'.\n"
+                "The backend startup sequence will continue with the configured backend but might fail."
+            )
 
     return backend
 
 
+# TODO: This is only used by vLLM but should move to vllm.py
 def shutdown_process(process: subprocess.Popen, timeout: int) -> None:
     """
     Shuts down a process
 
-    Sends SIGTERM and then after a timeout if the process still is not terminated sends a SIGKILL
+    Sends SIGINT and then after a timeout if the process still is not terminated sends a SIGKILL
 
     Args:
         process (subprocess.Popen): process of the vllm server
@@ -204,102 +283,75 @@ def shutdown_process(process: subprocess.Popen, timeout: int) -> None:
     Returns:
         Nothing
     """
-    process.terminate()
+    # vLLM responds to SIGINT by shutting down gracefully and reaping the children
+    logger.debug(f"Sending SIGINT to vLLM server PID {process.pid}")
+    process.send_signal(signal.SIGINT)
     try:
+        logger.debug("Waiting for vLLM server to shut down gracefully")
         process.wait(timeout)
     except subprocess.TimeoutExpired:
+        logger.debug(
+            f"Sending SIGKILL to vLLM server since timeout ({timeout}s) expired"
+        )
         process.kill()
 
 
 def ensure_server(
-    logger: logging.Logger,
     backend: str,
     api_base: str,
     http_client=None,
     host="localhost",
     port=8000,
-    queue=None,
+    background=True,
     server_process_func=None,
-) -> Tuple[multiprocessing.Process, subprocess.Popen, str]:
+) -> Tuple[
+    Optional[multiprocessing.Process], Optional[subprocess.Popen], Optional[str]
+]:
     """Checks if server is running, if not starts one as a subprocess. Returns the server process
     and the URL where it's available."""
 
-    try:
-        logger.debug(f"Trying to connect to {api_base}...")
-        # pylint: disable=duplicate-code
-        list_models(
-            api_base=api_base,
-            http_client=http_client,
-        )
-        return (None, None, None)
-        # pylint: enable=duplicate-code
-    except ClientException:
-        port = free_tcp_ipv4_port(host)
-        logger.debug("Using %i", port)
+    logger.info(f"Trying to connect to model server at {api_base}")
+    if check_api_base(api_base, http_client):
+        return (None, None, api_base)
+    port = free_tcp_ipv4_port(host)
+    logger.debug(f"Using available port {port} for temporary model serving.")
 
-        host_port = f"{host}:{port}"
-        temp_api_base = get_api_base(host_port)
-        logger.debug(f"Starting a temporary server at {temp_api_base}...")
-        llama_cpp_server_process = None
-        vllm_server_process = None
+    host_port = f"{host}:{port}"
+    temp_api_base = get_api_base(host_port)
+    vllm_server_process = None
 
-        if backend == VLLM:
-            # TODO: resolve how the hostname is getting passed around the class and this function
-            vllm_server_process = server_process_func(port=port)
-            count = 0
-            # TODO should this be configurable?
-            vllm_startup_timeout = 300
-            while count < vllm_startup_timeout:
-                sleep(1)
-                try:
-                    list_models(
-                        api_base=temp_api_base,
-                        http_client=http_client,
-                    )
-                    logger.debug(f"model at {temp_api_base} served on vLLM")
-                    break
-                except ClientException:
-                    count += 1
+    if backend == VLLM:
+        # TODO: resolve how the hostname is getting passed around the class and this function
+        vllm_server_process = server_process_func(port, background)
+        logger.info("Starting a temporary vLLM server at %s", temp_api_base)
+        count = 0
+        # TODO should this be configurable?
 
-            if count >= vllm_startup_timeout:
+        vllm_startup_max_attempts = 80  # Each call to check_api_base takes >2s + 2s sleep = ~5 mins of wait time
+        start_time_secs = time()
+        while count < vllm_startup_max_attempts:
+            count += 1
+            logger.info(
+                "Waiting for the vLLM server to start at %s, this might take a moment... Attempt: %s/%s",
+                temp_api_base,
+                count,
+                vllm_startup_max_attempts,
+            )
+            if check_api_base(temp_api_base, http_client):
+                logger.info("vLLM engine successfully started at %s", temp_api_base)
+                break
+            if count == vllm_startup_max_attempts:
+                logger.info(
+                    "Gave up waiting for vLLM server to start at %s after %s attempts",
+                    temp_api_base,
+                    vllm_startup_max_attempts,
+                )
+                duration = round(time() - start_time_secs, 1)
                 shutdown_process(vllm_server_process, 20)
                 # pylint: disable=raise-missing-from
-                raise ServerException(
-                    f"vLLM failed to start up in {vllm_startup_timeout} seconds"
-                )
-
-        elif backend == LLAMA_CPP:
-            # server_process_func is a function! we invoke it here and pass the port that was determined
-            # in this ensure_server() function
-            llama_cpp_server_process = server_process_func(port=port)
-            llama_cpp_server_process.start()
-
-            # in case the server takes some time to fail we wait a bit
-            logger.debug("Waiting for the server to start...")
-            count = 0
-            while llama_cpp_server_process.is_alive():
-                sleep(0.1)
-                try:
-                    list_models(
-                        api_base=temp_api_base,
-                        http_client=http_client,
-                    )
-                    break
-                except ClientException:
-                    pass
-                if count > 50:
-                    logger.error("failed to reach the API server")
-                    break
-                count += 1
-
-            logger.debug("Server started.")
-
-            # if the queue is not empty it means the server failed to start
-            if queue is not None and not queue.empty():
-                # pylint: disable=raise-missing-from
-                raise queue.get()
-
-        return (llama_cpp_server_process, vllm_server_process, temp_api_base)
+                raise ServerException(f"vLLM failed to start up in {duration} seconds")
+            sleep(2)
+    return (None, vllm_server_process, temp_api_base)
 
 
 def free_tcp_ipv4_port(host: str) -> int:
@@ -312,7 +364,7 @@ def free_tcp_ipv4_port(host: str) -> int:
     """
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind((host, 0))
-        return s.getsockname()[-1]
+        return int(s.getsockname()[-1])
 
 
 def is_temp_server_running():
@@ -320,7 +372,24 @@ def is_temp_server_running():
     return multiprocessing.current_process().name != "MainProcess"
 
 
-def get_uvicorn_config(app: uvicorn.Server, host: str, port: int) -> Config:
+def get_model_template(
+    model_family: str, model_path: pathlib.Path
+) -> Tuple[str, str, str]:
+    eos_token = "<|endoftext|>"
+    bos_token = ""
+    template = ""
+    resolved_family = get_model_family(model_family, model_path)
+    for template_dict in templates:
+        if template_dict["model"] == resolved_family:
+            template = template_dict["template"]
+            if template_dict["model"] == "mixtral":
+                eos_token = "</s>"
+                bos_token = "<s>"
+
+    return template, eos_token, bos_token
+
+
+def get_uvicorn_config(app: fastapi.FastAPI, host: str, port: int) -> Config:
     return Config(
         app,
         host=host,
@@ -331,29 +400,34 @@ def get_uvicorn_config(app: uvicorn.Server, host: str, port: int) -> Config:
     )
 
 
-def select_backend(logger: logging.Logger, cfg: serve_config) -> BackendServer:
+def select_backend(
+    cfg: serve_config,
+    backend: Optional[str] = None,
+    model_path: pathlib.Path | None = None,
+) -> BackendServer:
     # Local
-    # pylint: disable=import-outside-toplevel
     from .llama_cpp import Server as llama_cpp_server
     from .vllm import Server as vllm_server
 
-    backend_instance = None
-    model_path = pathlib.Path(cfg.model_path)
-    backend_name = cfg.backend
+    model_path = pathlib.Path(model_path or cfg.model_path)
+    backend_name = backend if backend is not None else cfg.backend
     try:
-        backend = get(logger, model_path, backend_name)
+        backend = get(model_path, backend_name)
     except ValueError as e:
         click.secho(f"Failed to determine backend: {e}", fg="red")
         raise click.exceptions.Exit(1)
 
     host, port = split_hostport(cfg.host_port)
+    chat_template = cfg.chat_template
+    if not chat_template:
+        chat_template = CHAT_TEMPLATE_AUTO
 
     if backend == LLAMA_CPP:
         # Instantiate the llama server
-        backend_instance = llama_cpp_server(
-            logger=logger,
+        return llama_cpp_server(
             api_base=cfg.api_base(),
             model_path=model_path,
+            chat_template=chat_template,
             gpu_layers=cfg.llama_cpp.gpu_layers,
             max_ctx_size=cfg.llama_cpp.max_ctx_size,
             num_threads=None,  # exists only as a flag not a config
@@ -361,15 +435,26 @@ def select_backend(logger: logging.Logger, cfg: serve_config) -> BackendServer:
             host=host,
             port=port,
         )
-
     if backend == VLLM:
         # Instantiate the vllm server
-        backend_instance = vllm_server(
-            logger=logger,
+        return vllm_server(
             api_base=cfg.api_base(),
+            model_family=cfg.vllm.llm_family,
             model_path=model_path,
+            chat_template=chat_template,
             vllm_args=cfg.vllm.vllm_args,
             host=host,
             port=port,
         )
-    return backend_instance
+    click.secho(f"Unknown backend: {backend}", fg="red")
+    raise click.exceptions.Exit(1)
+
+
+def verify_template_exists(path):
+    if not path.exists():
+        raise FileNotFoundError("Chat template file does not exist: {}".format(path))
+
+    if not path.is_file():
+        raise IsADirectoryError(
+            "Chat templates paths must point to a file: {}".format(path)
+        )

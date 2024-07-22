@@ -8,8 +8,17 @@ You'll need to setup the respective cloud CLI before using [cloud-instance.sh](c
 
 ### AWS
 
-- [aws](https://aws.amazon.com/cli/) (the AWS CLI)
+- You can ensure you have all the necessary local system packages with `local-setup.sh` (see example below)
+  - This includes [aws](https://aws.amazon.com/cli/) (the AWS CLI)
 - A keypair created within AWS. Config defaults to `whoami` for key name.
+
+```bash
+# Ensure proper system packages are installed if your local system is Red Hat-based
+# If you are running a different OS you'll need to install these packages manually
+./local-setup.sh rh ensure-aws-system-pkgs
+# If you are using SAML auth with the AWS CLI, you can install packages for that with the '-s` flag
+./local-setup.sh rh ensure-aws-system-pkgs -s
+```
 
 ### IBM
 
@@ -44,35 +53,35 @@ Either way, you'll need to edit the config to reference your cloud environment(s
 
 ## Usage
 
-`./cloud-instance.sh <cloud-type> <command> [options]`
+`scripts/infra/cloud-instance.sh <cloud-type> <command> [options]`
 
 Example:
 
 ```bash
 # Launch a new instance with your `EC2_INSTANCE_NAME` and `EC2_INSTANCE_TYPE` specified
 # in config with the instance type including Nvidia GPU(s)
-./cloud-instance.sh ec2 launch
+scripts/infra/cloud-instance.sh ec2 launch
 # Clone instructlab onto the instance and setup the development environment
-./cloud-instance.sh ec2 setup-rh-devenv
+scripts/infra/cloud-instance.sh ec2 setup-rh-devenv
 # Install nvidia drivers and reboot
-./cloud-instance.sh ec2 install-rh-nvidia-drivers
-./cloud-instance.sh ec2 ssh sudo reboot
+scripts/infra/cloud-instance.sh ec2 install-rh-nvidia-drivers
+scripts/infra/cloud-instance.sh ec2 ssh sudo reboot
 # Install instructlab
-./cloud-instance.sh ec2 pip-install-with-nvidia
+scripts/infra/cloud-instance.sh ec2 pip-install-with-nvidia
 # ssh to the instance
-./cloud-instance.sh ec2 ssh
+scripts/infra/cloud-instance.sh ec2 ssh
 # Run commands on the instance through ssh
-./cloud-instance.sh ec2 ssh ls -la
-./cloud-instance.sh ec2 ssh "source instructlab/venv/bin/activate && ilab sysinfo"
+scripts/infra/cloud-instance.sh ec2 ssh ls -la
+scripts/infra/cloud-instance.sh ec2 ssh "source instructlab/venv/bin/activate && ilab system info"
 # Sync your local git repo to the repo on the instance
-./cloud-instance.sh ec2 sync
+scripts/infra/cloud-instance.sh ec2 sync
 # Make changes in your local git without committing
 # Sync your changes to the remote instance with a temporary commit
-./cloud-instance.sh ec2 sync -c
+scripts/infra/cloud-instance.sh ec2 sync -c
 # When you're done, stop the instance
-./cloud-instance.sh ec2 stop
+scripts/infra/cloud-instance.sh ec2 stop
 # While stopped and not yet pruned from your account, you can restart it if needed
-./cloud-instance.sh ec2 start
+scripts/infra/cloud-instance.sh ec2 start
 # When you are done, you can delete the instance
-./cloud-instance.sh ec2 terminate
+scripts/infra/cloud-instance.sh ec2 terminate
 ```

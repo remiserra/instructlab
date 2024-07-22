@@ -13,7 +13,7 @@ from requests import exceptions as requests_exceptions
 import click
 
 # First Party
-from instructlab import utils
+from instructlab import clickext, utils
 
 logger = logging.getLogger(__name__)
 
@@ -22,8 +22,8 @@ logger = logging.getLogger(__name__)
 @click.option(
     "--model-dir",
     help="Base directory where model is stored.",
-    default="instructlab-merlinite-7b-lab-mlx-q",
     show_default=True,
+    required=True,
 )
 @click.option("--adapter-file", help="LoRA adapter to fuse.", default=None)
 @click.option(
@@ -50,9 +50,9 @@ logger = logging.getLogger(__name__)
     is_flag=True,
     help="Keep intermediary files.",
 )
-@utils.macos_requirement(echo_func=click.secho, exit_exception=click.exceptions.Exit)
 @click.pass_context
-@utils.display_params
+@clickext.display_params
+@utils.macos_requirement(echo_func=click.secho, exit_exception=click.exceptions.Exit)
 def convert(
     ctx,  # pylint: disable=unused-argument
     model_dir,
@@ -63,7 +63,7 @@ def convert(
     keep_files,
 ):
     """Converts model to GGUF"""
-    # pylint: disable=C0415
+    # pylint: disable=import-outside-toplevel
     # Third Party
     from instructlab_quantize import run_quantize  # pylint: disable=import-error
 
@@ -71,6 +71,8 @@ def convert(
     from ..llamacpp.llamacpp_convert_to_gguf import convert_llama_to_gguf
     from ..train.lora_mlx.convert import convert_between_mlx_and_pytorch
     from ..train.lora_mlx.fuse import fine_tune
+
+    model_dir = os.path.expandvars(os.path.expanduser(model_dir))
 
     # compute model name from model-dir if not supplied
     if model_name is None:

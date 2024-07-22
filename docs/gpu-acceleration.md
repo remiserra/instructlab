@@ -37,7 +37,7 @@ how to do that on Fedora with `dnf`:
   # You can clone the repo if you haven't already done so (either one)
   # gh repo clone instructlab/instructlab
   # git clone https://github.com/instructlab/instructlab.git
-  pip install ./instructlab/
+  pip install ./instructlab[cuda]
   ```
 
 With Python 3.11 installed, it's time to replace some packages!
@@ -58,7 +58,7 @@ You'll want to add a few options to ensure it gets installed over the
 existing package, has the desired backend, and the correct version.
 
 ```shell
-pip install --force-reinstall llama_cpp_python==0.2.79 -C cmake.args="-DLLAMA_$BACKEND=on"
+pip install --force-reinstall --no-deps llama_cpp_python==0.2.79 -C cmake.args="-DLLAMA_$BACKEND=on"
 ```
 
 where `$BACKEND` is one of `HIPBLAS` (ROCm), `CUDA`, `METAL`
@@ -119,7 +119,7 @@ existing package: `--force-reinstall`. Your final
 command should look like this:
 
 ```shell
-# Veryify CUDA can be found in your PATH variable
+# Verify CUDA can be found in your PATH variable
 export CUDA_HOME=/usr/local/cuda
 export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda/lib64:/usr/local/cuda/extras/CUPTI/lib64
 export PATH=$PATH:$CUDA_HOME/bin
@@ -129,11 +129,21 @@ pip cache remove llama_cpp_python
 pip install --force-reinstall llama_cpp_python==0.2.79 -C cmake.args="-DLLAMA_CUDA=on"
 
 # Re-install InstructLab
-pip install instructlab/.
+pip install ./instructlab[cuda]
+```
+
+If you are running Fedora 40, you need to replace the `Recompile llama-cpp-python using CUDA` section above with the
+following until [CUDA](https://docs.nvidia.com/cuda/cuda-installation-guide-linux/#host-compiler-support-policy)
+supports GCC v14.1+.
+
+```shell
+# Recompile llama-cpp-python using CUDA
+sudo dnf install clang17
+CUDAHOSTCXX=$(which clang++-17) pip install --force-reinstall llama_cpp_python==0.2.79 -C cmake.args="-DLLAMA_CUDA=on"
 ```
 
 Proceed to the `Initialize` section of
-the [CLI README](https://github.com/instructlab/instructlab?tab=readme-ov-file#%EF%B8%8F-initialize-lab),
+the [CLI README](https://github.com/instructlab/instructlab?tab=readme-ov-file#%EF%B8%8F-initialize-ilab),
 and use the `nvtop` utility to validate GPU utilization when interacting
 with `ilab model chat` or `ilab data generate`
 
@@ -150,7 +160,7 @@ sudo usermod -a -G render,video $LOGNAME
 
 #### ROCm container
 
-The most convenient approach is the [ROCm toolbox container](../containers/rocm/README.md). The container comes with PyTorch, llama-cpp, and other dependencies pre-installed and ready-to-use.
+The most convenient approach is the [ROCm toolbox container](amd-rocm.md). The container comes with PyTorch, llama-cpp, and other dependencies pre-installed and ready-to-use.
 
 #### Manual installation
 
@@ -224,7 +234,7 @@ CMAKE_ARGS="-DLLAMA_HIPBLAS=on -DCMAKE_C_COMPILER='/opt/rocm/llvm/bin/clang' -DC
 > `CMAKE_ARGS="-DLLAMA_HIPBLAS=on -DCMAKE_C_COMPILER=/usr/bin/clang
 > -DCMAKE_CXX_COMPILER=/usr/bin/clang++ -DAMDGPU_TARGETS=gfx1100"` instead.
 
-Once that package is installed, recompile `ilab` with `pip install .`.  You also
+Once that package is installed, recompile `ilab` with `pip install .[rocm]`.  You also
 need to tell `HIP` which GPU to use - you can find this out via `rocminfo`
 although it is typically GPU 0.  To set which device is visible to HIP, we'll
 set `export HIP_VISIBLE_DEVICES=0` for GPU 0.   You may also have to set
@@ -265,7 +275,7 @@ pip cache remove llama_cpp_python
 pip install --force-reinstall llama_cpp_python==0.2.79 -C cmake.args="-DLLAMA_METAL=on"
 ```
 
-Once that package is installed, recompile `ilab` with `pip install .` and skip
+Once that package is installed, recompile `ilab` with `pip install .[mps]` and skip
 to the `Testing` section.
 
 ### Testing

@@ -85,7 +85,7 @@ pip install -r requirements.txt
 If you want to test the `ilab` binary, you can install `ilab` and all dependencies with:
 
 ```shell
-pip install .
+pip install .[cpu]
 ```
 
 ### Testing
@@ -132,7 +132,7 @@ We use [pre-commit](https://pre-commit.com/) to enforce coding style using [`bla
 You can invoke formatting with:
 
 ```shell
-tox -e fmt
+tox -e ruff
 ```
 
 In addition, we use [`pylint`](https://www.pylint.org) to perform static code analysis of the code.

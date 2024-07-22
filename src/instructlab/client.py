@@ -1,11 +1,14 @@
 # SPDX-License-Identifier: Apache-2.0
 # pylint: disable=duplicate-code
 
+# Standard
+
 # Third Party
 from openai import OpenAI, OpenAIError
+import httpx
 
 # Local
-from .configuration import DEFAULT_API_KEY, DEFAULT_CONNECTION_TIMEOUT
+from .configuration import DEFAULTS
 
 
 class ClientException(Exception):
@@ -14,7 +17,7 @@ class ClientException(Exception):
 
 def list_models(
     api_base,
-    api_key=DEFAULT_API_KEY,
+    api_key=DEFAULTS.API_KEY,
     http_client=None,
 ):
     """List models from OpenAI-compatible server"""
@@ -22,9 +25,17 @@ def list_models(
         client = OpenAI(
             base_url=api_base,
             api_key=api_key,
-            timeout=DEFAULT_CONNECTION_TIMEOUT,
+            timeout=DEFAULTS.CONNECTION_TIMEOUT,
             http_client=http_client,
         )
         return client.models.list()
     except OpenAIError as exc:
         raise ClientException(f"Connection Error {exc}") from exc
+
+
+def check_api_base(api_base: str, http_client: httpx.Client | None = None) -> bool:
+    try:
+        list_models(api_base=api_base, http_client=http_client)
+        return True
+    except ClientException:
+        return False

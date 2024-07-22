@@ -23,9 +23,9 @@ import httpx
 import openai
 
 # First Party
+from instructlab import clickext
 from instructlab import client as ilabclient
 from instructlab import configuration as cfg
-from instructlab import utils
 
 # Local
 from ..utils import get_sysprompt, http_client
@@ -71,21 +71,22 @@ PROMPT_PREFIX = ">>> "
 @click.option(
     "-m",
     "--model",
-    default=cfg.DEFAULT_MODEL,
-    show_default=True,
+    cls=clickext.ConfigOption,
+    required=True,  # default from config
     help="Model name to print in chat process",
 )
 @click.option(
     "-c",
     "--context",
-    default="default",
-    show_default=True,
+    cls=clickext.ConfigOption,
+    required=True,  # default from config
     help="Name of system context in config file.",
 )
 @click.option(
     "-s",
     "--session",
     type=click.File("r"),
+    cls=clickext.ConfigOption,
     help="Filepath of a dialog session file.",
 )
 @click.option(
@@ -98,11 +99,14 @@ PROMPT_PREFIX = ">>> "
     "-gm",
     "--greedy-mode",
     is_flag=True,
+    cls=clickext.ConfigOption,
+    required=True,  # default from config
     help="Use model greedy decoding. Useful for debugging and reproducing errors.",
 )
 @click.option(
     "--max-tokens",
     type=click.INT,
+    cls=clickext.ConfigOption,
     help="Set a maximum number of tokens to request from the model endpoint.",
 )
 @click.option(
@@ -113,7 +117,7 @@ PROMPT_PREFIX = ">>> "
 @click.option(
     "--api-key",
     type=click.STRING,
-    default=cfg.DEFAULT_API_KEY,  # Note: do not expose default API key
+    default=cfg.DEFAULTS.API_KEY,  # Note: do not expose default API key
     help="API key for API endpoint. [default: config.DEFAULT_API_KEY]",
 )
 @click.option(
@@ -146,7 +150,7 @@ PROMPT_PREFIX = ">>> "
     help="Force model family to use when picking a chat template",
 )
 @click.pass_context
-@utils.display_params
+@clickext.display_params
 def chat(
     ctx,
     question,
@@ -165,7 +169,7 @@ def chat(
     model_family,
 ):
     """Run a chat using the modified model"""
-    # pylint: disable=C0415
+    # pylint: disable=import-outside-toplevel
     # First Party
     from instructlab.model.backends.llama_cpp import is_temp_server_running
 
@@ -178,20 +182,14 @@ def chat(
         from instructlab.model.backends import backends
 
         ctx.obj.config.serve.llama_cpp.llm_family = model_family
-        backend_instance = backends.select_backend(logger, ctx.obj.config.serve)
+        backend_instance = backends.select_backend(ctx.obj.config.serve)
 
         try:
             # Run the llama server
-            backend_instance.run_detached(
-                http_client(ctx.params),
-            )
-            # api_base will be set by run_detached
-            api_base = backend_instance.api_base
+            api_base = backend_instance.run_detached(http_client(ctx.params))
         except Exception as exc:
             click.secho(f"Failed to start server: {exc}", fg="red")
             raise click.exceptions.Exit(1)
-        if not api_base:
-            api_base = ctx.obj.config.serve.api_base()
 
     # if only the chat is running (`ilab model chat`) and the temp server is not, the chat interacts
     # in server mode (`ilab model serve` is running somewhere, or we are talking to another
@@ -208,10 +206,16 @@ def chat(
         # from the config is the same as the default value, then the user didn't provide a value
         # we then compare it with the value from the server to see if it's different
         if (
-            model == cfg.DEFAULT_MODEL
-            and ctx.obj.config.chat.model == cfg.DEFAULT_MODEL
+            # We need to get the base name of the model because the model path is a full path and
+            # the once from the config is just the model name
+            os.path.basename(model) == cfg.DEFAULTS.GGUF_MODEL_NAME
+            and os.path.basename(ctx.obj.config.chat.model)
+            == cfg.DEFAULTS.GGUF_MODEL_NAME
             and api_base == ctx.obj.config.serve.api_base()
         ):
+            logger.debug(
+                "No model was provided by the user as a CLI argument or in the config, will use the model from the server"
+            )
             try:
                 models = ilabclient.list_models(
                     api_base=api_base,
@@ -229,7 +233,7 @@ def chat(
                     and server_model != ctx.obj.config.chat.model
                     else model
                 )
-
+                logger.debug(f"Using model from server {model}")
             except ilabclient.ClientException as exc:
                 click.secho(
                     f"Failed to list models from {api_base}. Please check the API key and endpoint.",
@@ -684,7 +688,7 @@ def chat_cli(
     client = OpenAI(
         base_url=api_base,
         api_key=ctx.params["api_key"],
-        timeout=cfg.DEFAULT_CONNECTION_TIMEOUT,
+        timeout=cfg.DEFAULTS.CONNECTION_TIMEOUT,
         http_client=http_client(ctx.params),
     )
     # ensure the model specified exists on the server. with backends like vllm, this is crucial.
@@ -696,7 +700,7 @@ def chat_cli(
     for m in model_list:
         model_ids.append(m.id)
     if not any(model == m for m in model_ids):
-        if model == cfg.DEFAULT_MODEL_OLD:
+        if model == cfg.DEFAULTS.MODEL_NAME_OLD:
             logger.info(
                 f"Model {model} is not a full path. Try running ilab config init or edit your config to have the full model path for serving, chatting, and generation."
             )

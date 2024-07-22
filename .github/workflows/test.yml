@@ -53,7 +53,7 @@ jobs:
             platform: "macos-latest"
     steps:
       - name: "Harden Runner"
-        uses: step-security/harden-runner@17d0e2bd7d51742c71671bd19fa12bdc9d40a3d6 # v2.8.1
+        uses: step-security/harden-runner@0d381219ddf674d61a7572ddd19d7941e271515c # v2.9.0
         with:
           egress-policy: audit # TODO: change to 'egress-policy: block' after couple of runs
 
@@ -78,7 +78,7 @@ jobs:
           brew install expect coreutils bash
 
       - name: Setup Python ${{ matrix.python }}
-        uses: actions/setup-python@82c7e631bb3cdc910f68e0081d67478d79c6982d # v5.1.0
+        uses: actions/setup-python@39cd14951b08e74b54015e9e001cdefcf80e669f # v5.1.1
         with:
           python-version: ${{ matrix.python }}
           cache: pip
@@ -118,11 +118,11 @@ jobs:
       - name: Test Workflow Complete
         run: echo "Test Workflow Complete"
 
-  man:
+  docs:
     runs-on: ubuntu-latest
     steps:
       - name: "Harden Runner"
-        uses: step-security/harden-runner@17d0e2bd7d51742c71671bd19fa12bdc9d40a3d6 # v2.8.1
+        uses: step-security/harden-runner@0d381219ddf674d61a7572ddd19d7941e271515c # v2.9.0
         with:
           egress-policy: audit # TODO: change to 'egress-policy: block' after couple of runs
 
@@ -133,7 +133,7 @@ jobs:
           fetch-depth: 0
 
       - name: Setup Python 3.11
-        uses: actions/setup-python@82c7e631bb3cdc910f68e0081d67478d79c6982d # v5.1.0
+        uses: actions/setup-python@39cd14951b08e74b54015e9e001cdefcf80e669f # v5.1.1
         with:
           python-version: 3.11
           cache: pip
@@ -147,7 +147,7 @@ jobs:
 
       - name: Run tox docs target (expect failure since tox is not present)
         run: |
-          make man
+          make docs
         continue-on-error: true
 
       - name: Run tox docs target
@@ -170,7 +170,7 @@ jobs:
 
       - name: Run tox docs target
         run: |
-          make man
+          make docs
 
       - name: Check that man pages were generated
         uses: andstor/file-existence-action@076e0072799f4942c8bc574a82233e1e4d13e9d6 # v3.0.0
