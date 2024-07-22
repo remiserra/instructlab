@@ -7,8 +7,11 @@ import logging
 import click
 
 # First Party
-from instructlab import configuration as config
-from instructlab import utils
+from instructlab import clickext
+from instructlab.configuration import DEFAULTS
+
+# Local
+from ..utils import http_client
 
 logger = logging.getLogger(__name__)
 
@@ -16,48 +19,55 @@ logger = logging.getLogger(__name__)
 @click.command()
 @click.option(
     "--model",
-    default=config.DEFAULT_MODEL,
-    show_default=True,
+    default=lambda: DEFAULTS.DEFAULT_MODEL,
+    show_default="The default model used by the instructlab system, located in the data directory.",
     help="Name of the model used during generation.",
 )
 @click.option(
     "--num-cpus",
     type=click.INT,
     help="Number of processes to use.",
-    default=config.DEFAULT_NUM_CPUS,
+    default=DEFAULTS.NUM_CPUS,
     show_default=True,
 )
 @click.option(
     "--chunk-word-count",
     type=click.INT,
     help="Number of words to chunk the document",
-    default=config.DEFAULT_CHUNK_WORD_COUNT,
+    default=DEFAULTS.CHUNK_WORD_COUNT,
     show_default=True,
 )
+# TODO - DEPRECATED - Remove in a future release
 @click.option(
     "--num-instructions",
     type=click.INT,
-    help="Number of instructions to generate.",
-    default=config.DEFAULT_NUM_INSTRUCTIONS,
+    default=-1,
+    hidden=True,
+)
+@click.option(
+    "--sdg-scale-factor",
+    type=click.INT,
+    help="Number of instructions to generate for each seed example. The examples map to sample q&a pairs for new skills. For knowledge, examples are generated with both the sample q&a pairs, as well as chunks of the knowledge document(s), so the resulting data set is typically larger for a knowledge addition for the same value of `--sdg-scale-factor`.",
     show_default=True,
 )
 @click.option(
     "--taxonomy-path",
     type=click.Path(),
-    default=config.DEFAULT_TAXONOMY_PATH,
-    show_default=True,
-    help=f"Path to {config.DEFAULT_TAXONOMY_REPO} clone or local file path.",
+    default=lambda: DEFAULTS.TAXONOMY_DIR,
+    show_default="The default taxonomy path used by instructlab, located in the data directory.",
+    help="Path to where the taxonomy is located.",
 )
 @click.option(
     "--taxonomy-base",
-    default=config.DEFAULT_TAXONOMY_BASE,
+    default=DEFAULTS.TAXONOMY_BASE,
     show_default=True,
     help="Base git-ref to use when generating new taxonomy.",
 )
 @click.option(
     "--output-dir",
     type=click.Path(),
-    default=config.DEFAULT_GENERATED_FILES_OUTPUT_DIR,
+    default=lambda: DEFAULTS.DATASETS_DIR,
+    show_default="The default output directory used by instructlab, located in the data directory.",
     help="Path to output generated files.",
 )
 @click.option(
@@ -80,7 +90,7 @@ logger = logging.getLogger(__name__)
 @click.option(
     "--api-key",
     type=click.STRING,
-    default=config.DEFAULT_API_KEY,  # Note: do not expose default API key
+    default=DEFAULTS.API_KEY,  # Note: do not expose default API key
     help="API key for API endpoint. [default: config.DEFAULT_API_KEY]",
 )
 @click.option(
@@ -92,7 +102,7 @@ logger = logging.getLogger(__name__)
 @click.option(
     "--server-ctx-size",
     type=click.INT,
-    default=config.MAX_CONTEXT_SIZE,
+    default=DEFAULTS.MAX_CONTEXT_SIZE,
     show_default=True,
     help="The context size is the maximum number of tokens the server will consider.",
 )
@@ -125,13 +135,23 @@ logger = logging.getLogger(__name__)
     "--model-family",
     help="Force model family to use when picking a generation template",
 )
+@click.option(
+    "--pipeline",
+    type=click.STRING,
+    default="simple",
+    # Hidden until instructlab-sdg releases a version with multiple pipelines
+    # For now only "simple" is supported in the latest release.
+    hidden=True,
+    help="Data generation pipeline to use. Available: simple, full, or a valid path to a directory of pipeline worlfow YAML files. Note that 'full' requires a larger teacher model, Mixtral-8x7b.",
+)
 @click.pass_context
-@utils.display_params
+@clickext.display_params
 def generate(
     ctx,
     model,
     num_cpus,
     num_instructions,
+    sdg_scale_factor,
     taxonomy_path,
     taxonomy_base,
     output_dir,
@@ -147,14 +167,22 @@ def generate(
     tls_client_key,
     tls_client_passwd,
     model_family,
+    pipeline,
 ):
     """Generates synthetic data to enhance your example data"""
-    # pylint: disable=C0415
+    # pylint: disable=import-outside-toplevel
     # Third Party
     from instructlab.sdg.generate_data import generate_data
     from instructlab.sdg.utils import GenerateException
 
-    prompt_file_path = config.DEFAULT_PROMPT_FILE
+    if num_instructions != -1:
+        click.secho(
+            "The --num-instructions flag is deprecated. Please use --sdg-scale-factor instead.",
+            fg="yellow",
+        )
+
+    prompt_file_path = DEFAULTS.PROMPT_FILE
+
     if ctx.obj is not None:
         prompt_file_path = ctx.obj.config.generate.prompt_file
 
@@ -166,20 +194,14 @@ def generate(
         from instructlab.model.backends import backends
 
         ctx.obj.config.serve.llama_cpp.llm_family = model_family
-        backend_instance = backends.select_backend(logger, ctx.obj.config.serve)
+        backend_instance = backends.select_backend(ctx.obj.config.serve)
 
         try:
             # Run the llama server
-            backend_instance.run_detached(
-                tls_insecure, tls_client_cert, tls_client_key, tls_client_passwd
-            )
-            # api_base will be set by run_detached
-            api_base = backend_instance.api_base
+            api_base = backend_instance.run_detached(http_client(ctx.params))
         except Exception as exc:
             click.secho(f"Failed to start server: {exc}", fg="red")
             raise click.exceptions.Exit(1)
-        if not api_base:
-            api_base = ctx.obj.config.serve.api_base()
     try:
         click.echo(
             f"Generating synthetic data using '{model}' model, taxonomy:'{taxonomy_path}' against {api_base} server"
@@ -191,7 +213,7 @@ def generate(
             model_family=model_family,
             model_name=model,
             num_cpus=num_cpus,
-            num_instructions_to_generate=num_instructions,
+            num_instructions_to_generate=sdg_scale_factor,
             taxonomy=taxonomy_path,
             taxonomy_base=taxonomy_base,
             output_dir=output_dir,
@@ -205,6 +227,7 @@ def generate(
             tls_client_cert=tls_client_cert,
             tls_client_key=tls_client_key,
             tls_client_passwd=tls_client_passwd,
+            pipeline=pipeline,
         )
     except GenerateException as exc:
         click.secho(

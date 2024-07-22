@@ -8,38 +8,41 @@ import shutil
 
 # Third Party
 # pylint: disable=ungrouped-imports
-from instructlab.training import (
-    DeepSpeedOptions,
-    LoraOptions,
-    TorchrunArgs,
-    TrainingArgs,
-    run_training,
-)
 import click
 
 # First Party
-from instructlab import utils
+from instructlab import clickext, utils
+from instructlab.configuration import DEFAULTS, map_train_to_library
 
 logger = logging.getLogger(__name__)
+
+
+ADDITIONAL_ARGUMENTS = "additional_args"
 
 
 @click.command()
 @click.option(
     "--data-path",
     type=click.Path(file_okay=True),
+    cls=clickext.ConfigOption,
+    required=True,  # default from config
     help="Base directory where data is stored.",
-    default=None,
+    default=lambda: DEFAULTS.DATASETS_DIR,
 )
 @click.option(
     "--ckpt-output-dir",
     type=click.Path(),
-    default="checkpoints",
+    cls=clickext.ConfigOption,
+    required=True,  # default from config
+    default=lambda: DEFAULTS.CHECKPOINTS_DIR,
     help="output directory to store checkpoints in during training",
 )
 @click.option(
     "--data-output-dir",
     type=click.Path(),
-    default="data",
+    cls=clickext.ConfigOption,
+    required=True,  # default from config
+    default=lambda: DEFAULTS.INTERNAL_DIR,
     help="output directory to store training data in",
 )
 @click.option(
@@ -60,17 +63,24 @@ logger = logging.getLogger(__name__)
 )
 @click.option(
     "--tokenizer-dir",
+    type=click.Path(),
     help="Base directory where tokenizer is stored.",
     default=None,
     show_default=True,
 )
 @click.option(
     "--model-path",
-    help="Base directory where model is stored.",
-    default="instructlab/merlinite-7b-lab",
-    show_default=True,
+    type=click.Path(),
+    cls=clickext.ConfigOption,
+    required=True,  # default from config
+    help="HuggingFace model repo path, in the format of <namespace>/<repo_name>.",
+    default=DEFAULTS.MODEL_REPO,
 )
-@click.option("--iters", help="Number of iterations to train LoRA.", default=100)
+@click.option(
+    "--iters",
+    help="Number of iterations to train LoRA.",
+    default=100,
+)
 @click.option(
     "--local",
     is_flag=True,
@@ -85,8 +95,8 @@ logger = logging.getLogger(__name__)
 @click.option(
     "--num-epochs",
     type=click.INT,
-    default=1,  # TODO: change this to a more reasonable default
-    show_default=True,
+    cls=clickext.ConfigOption,
+    required=True,  # default from config
     help="The number of times the training data is passed through the training algorithm. Please note that this value is used on Linux platforms only.",
 )
 @click.option(
@@ -114,66 +124,155 @@ logger = logging.getLogger(__name__)
     ),
 )
 @click.option(
-    "--max-seq-len", type=int, help="maximum length, in tokens, of a single sample."
+    "--max-seq-len",
+    type=int,
+    cls=clickext.ConfigOption,
+    required=True,  # default from config
+    help="maximum length, in tokens, of a single sample.",
 )
 @click.option(
     "--max-batch-len",
     type=int,
+    cls=clickext.ConfigOption,
+    required=True,  # default from config
     help="maximum overall length of samples processed in a given batch.",
 )
 @click.option(
-    "--effective-batch-size", type=int, help="total batch size across all GPUs"
+    "--effective-batch-size",
+    type=int,
+    cls=clickext.ConfigOption,
+    required=True,  # default from config
+    help="total batch size across all GPUs",
 )
 @click.option(
     "--save-samples",
     type=int,
+    cls=clickext.ConfigOption,
+    required=True,  # default from config
     help="The number of samples processed in between checkpoints.",
 )
-@click.option("--learning-rate", type=float, help="learning rate for training")
-@click.option("--warmup-steps", type=int, help="warmup steps for training")
 @click.option(
-    "--cpu-offload-optimizer", type=bool, help="if true enables optimizer offload"
+    "--learning-rate",
+    type=float,
+    cls=clickext.ConfigOption,
+    config_sections=ADDITIONAL_ARGUMENTS,
+    required=True,  # default from config
+    help="learning rate for training",
 )
-@click.option("--cpu-offload-ratio", type=float, help="cpu offload optimizer ratio")
 @click.option(
-    "--cpu-offload-optimizer-pin-memory",
+    "--warmup-steps",
+    type=int,
+    cls=clickext.ConfigOption,
+    config_sections=ADDITIONAL_ARGUMENTS,
+    required=True,  # default from config
+    help="warmup steps for training",
+)
+@click.option(
+    "--deepspeed-cpu-offload-optimizer",
     type=bool,
+    cls=clickext.ConfigOption,
+    required=True,  # default from config
+    # config_section="deepspeed_options",
+    help="if true enables optimizer offload",
+)
+@click.option(
+    "--deepspeed-cpu-offload-optimizer-ratio",
+    type=float,
+    cls=clickext.ConfigOption,
+    required=True,  # default from config
+    config_sections=ADDITIONAL_ARGUMENTS,
+    help="cpu offload optimizer ratio",
+)
+@click.option(
+    "--deepspeed-cpu-offload-optimizer-pin-memory",
+    type=bool,
+    cls=clickext.ConfigOption,
+    required=True,  # default from config
+    config_sections=ADDITIONAL_ARGUMENTS,
     help="if true pin memory when using cpu optimizer",
 )
 # below flags are invalid if lora == false
-@click.option("--rank", type=int, help="rank of update matricies")
-@click.option("--alpha", type=int, help="how influential/strong lora tune will be")
-@click.option("--dropout", type=float, help="dropout for LoRA layers")
-@click.option("--target-modules", multiple=True, default=[], help="LoRA modules to use")
 @click.option(
-    "--quantize-data-type",
+    "--lora-rank",
+    type=int,
+    cls=clickext.ConfigOption,
+    required=True,  # default from config
+    # config_section="lora",
+    help="rank of update matricies",
+)
+@click.option(
+    "--lora-alpha",
+    type=int,
+    cls=clickext.ConfigOption,
+    required=True,  # default from config
+    config_sections=ADDITIONAL_ARGUMENTS,
+    help="how influential/strong lora tune will be",
+)
+@click.option(
+    "--lora-dropout",
+    type=float,
+    cls=clickext.ConfigOption,
+    required=True,  # default from config
+    config_sections=ADDITIONAL_ARGUMENTS,
+    help="dropout for LoRA layers",
+)
+@click.option(
+    "--lora-target-modules",
+    cls=clickext.ConfigOption,
+    config_sections=ADDITIONAL_ARGUMENTS,
+    multiple=True,
+    default=[],
+    help="LoRA modules to use",
+)
+@click.option(
+    "--lora-quantize-dtype",
     type=str,
     default=None,
     help="quantization data type to use when training a LoRA.",
 )
 @click.option(
     "--is-padding-free",
+    cls=clickext.ConfigOption,
     type=bool,
     help="whether or not we are training a padding free transformer.",
 )
 @click.option(
     "--gpus",
     "nproc_per_node",
+    cls=clickext.ConfigOption,
     type=int,
     help="this is the number of GPUs to use. This is a torch specific arg and must be called nproc-per-node",
 )
-@click.option("--nnodes", type=int, help="number of machines in the training pool.")
 @click.option(
-    "--node-rank", type=int, help="the rank of this machine in the training group."
+    "--nnodes",
+    type=int,
+    cls=clickext.ConfigOption,
+    config_sections=ADDITIONAL_ARGUMENTS,
+    required=True,  # default from config
+    help="number of machines in the training pool.",
+)
+@click.option(
+    "--node-rank",
+    type=int,
+    cls=clickext.ConfigOption,
+    config_sections=ADDITIONAL_ARGUMENTS,
+    required=True,  # default from config
+    help="the rank of this machine in the training group.",
 )
 @click.option(
     "--rdzv-id",
     type=int,
+    cls=clickext.ConfigOption,
+    config_sections=ADDITIONAL_ARGUMENTS,
+    required=True,  # default from config
     help="this is the training group ID. So, if there are multiple matching endpoints, only the machines with matching IDs can connect.",
 )
 @click.option(
     "--rdzv-endpoint",
     type=str,
+    cls=clickext.ConfigOption,
+    config_sections=ADDITIONAL_ARGUMENTS,
+    required=True,  # default from config
     help="this is the rendezvous endpoint which other torchrun jobs will join on.",
 )
 @click.option(
@@ -183,10 +282,10 @@ logger = logging.getLogger(__name__)
     help="if true, enables the legacy linux training codepath from release 0.17.0 and prior.",
 )
 @click.pass_context
-@utils.display_params
+@clickext.display_params
 def train(
     ctx,
-    data_path,
+    data_path: str,
     input_dir,
     skip_preprocessing,
     tokenizer_dir,
@@ -199,7 +298,7 @@ def train(
     device: str,
     four_bit_quant: bool,
     legacy,
-    **kwargs,  # pylint: disable=unused-argument
+    **kwargs,
 ):
     """
     Takes synthetic data generated locally with `ilab data generate` and the previous model and learns a new model using the MLX API.
@@ -212,13 +311,14 @@ def train(
     if four_bit_quant and device != "cuda":
         ctx.fail("'--4-bit-quant' option requires '--device=cuda'")
 
-    effective_data_dir = Path(data_path or "./taxonomy_data")
-    train_file = effective_data_dir / "train_gen.jsonl"
-    test_file = effective_data_dir / "test_gen.jsonl"
+    effective_data_dir = Path(data_path if data_path else DEFAULTS.DATASETS_DIR)
+    train_file = Path(effective_data_dir / "train_gen.jsonl")
+    test_file = Path(effective_data_dir / "test_gen.jsonl")
+    ckpt_output_dir = Path(kwargs["ckpt_output_dir"])
 
     # NOTE: If given a data_dir, input-dir is ignored in favor of existing!
-    if data_path is None or data_path == "./taxonomy_data" or data_path == "":
-        data_path = effective_data_dir
+    if not data_path or data_path.strip() == DEFAULTS.DATASETS_DIR:
+        data_path = str(effective_data_dir)
         if not os.path.exists(input_dir):
             click.secho(
                 f"Could not read directory: {input_dir}",
@@ -236,13 +336,25 @@ def train(
             raise click.exceptions.Exit(1)
 
         # generated input files reverse sorted by modification time
-        def get_files(pattern):
+        def get_files(directory: str, pattern: str) -> list[str]:
             return sorted(
-                Path(input_dir).glob(pattern), key=os.path.getmtime, reverse=True
+                [str(p) for p in Path(directory).glob(pattern)],
+                key=os.path.getmtime,
+                reverse=True,
             )
 
-        train_files = get_files("train_*")
-        test_files = get_files("test_*")
+        # ignore the test_file and train_file to prevent it from being copied back onto itself
+        # see: https://github.com/instructlab/instructlab/pull/1685
+        test_files = [
+            f
+            for f in get_files(input_dir, "test_*")
+            if os.path.basename(f) != os.path.basename(test_file)
+        ]
+        train_files = [
+            f
+            for f in get_files(input_dir, "train_*")
+            if os.path.basename(f) != os.path.basename(train_file)
+        ]
 
         if not train_files or not test_files:
             click.secho(
@@ -263,7 +375,6 @@ def train(
 
     # if macos, preserve that path
     if utils.is_macos_with_m_chip():
-        # pylint: disable=import-outside-toplevel
         # Local
         from ..mlx_explore.gguf_convert_to_mlx import load
         from ..mlx_explore.utils import fetch_tokenizer_from_hub
@@ -284,6 +395,7 @@ def train(
         # NOTE we can skip this if we have a way ship MLX
         # PyTorch safetensors to MLX safetensors
         model_dir_local = model_path.replace("/", "-")
+        model_dir_local = f"{ckpt_output_dir}/{model_dir_local}"
         model_dir_mlx = f"{model_dir_local}-mlx"
         model_dir_mlx_quantized = f"{model_dir_local}-mlx-q"
 
@@ -331,7 +443,6 @@ def train(
             steps_per_eval=10,
         )
     elif legacy:
-        # pylint: disable=import-outside-toplevel
         # Local
         from ..llamacpp.llamacpp_convert_to_gguf import convert_llama_to_gguf
         from ..train.linux_train import linux_train
@@ -399,7 +510,14 @@ def train(
         # checkpoint_dirs = training_results_dir.glob("checkpoint*")
         # shutil.rmtree(checkpoint_dirs[0])
     else:
-        # pull the training and torch args from the flags
+        # run_training is a dynamic attribute, pylint is not clever enough
+        # to detect it.
+        # Third Party
+        from instructlab.training import (  # pylint: disable=no-name-in-module
+            run_training,
+        )
+
+        # pull the trainrandom.randinting and torch args from the flags
         # the flags are populated from the config as a base.
         params = ctx.params
 
@@ -409,10 +527,13 @@ def train(
                 fg="red",
             )
             raise click.exceptions.Exit(1)
-        ds_args = DeepSpeedOptions(**params)
-        lora_args = LoraOptions(**params)
-        train_args = TrainingArgs(**params)
-        torch_args = TorchrunArgs(**params)
-        train_args.deepspeed_options = ds_args
-        train_args.lora = lora_args
-        run_training(train_args=train_args, torch_args=torch_args)
+        train_args, torch_args = map_train_to_library(params)
+        try:
+            run_training(train_args=train_args, torch_args=torch_args)
+        # unsure what types of exceptions training library returns, this will catch all for now
+        except Exception as exc:
+            click.secho(
+                f"Error while executing training library {exc}",
+                fg="red",
+            )
+            raise click.exceptions.Exit(1)

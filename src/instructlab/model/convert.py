@@ -13,7 +13,7 @@ from requests import exceptions as requests_exceptions
 import click
 
 # First Party
-from instructlab import utils
+from instructlab import clickext, utils
 
 logger = logging.getLogger(__name__)
 
@@ -22,8 +22,8 @@ logger = logging.getLogger(__name__)
 @click.option(
     "--model-dir",
     help="Base directory where model is stored.",
-    default="instructlab-merlinite-7b-lab-mlx-q",
     show_default=True,
+    required=True,
 )
 @click.option("--adapter-file", help="LoRA adapter to fuse.", default=None)
 @click.option(
@@ -44,9 +44,15 @@ logger = logging.getLogger(__name__)
     default=None,
     show_default=True,
 )
-@utils.macos_requirement(echo_func=click.secho, exit_exception=click.exceptions.Exit)
+@click.option(
+    "-k",
+    "--keep-files",
+    is_flag=True,
+    help="Keep intermediary files.",
+)
 @click.pass_context
-@utils.display_params
+@clickext.display_params
+@utils.macos_requirement(echo_func=click.secho, exit_exception=click.exceptions.Exit)
 def convert(
     ctx,  # pylint: disable=unused-argument
     model_dir,
@@ -54,9 +60,10 @@ def convert(
     skip_de_quantize,
     skip_quantize,
     model_name,
+    keep_files,
 ):
     """Converts model to GGUF"""
-    # pylint: disable=C0415
+    # pylint: disable=import-outside-toplevel
     # Third Party
     from instructlab_quantize import run_quantize  # pylint: disable=import-error
 
@@ -64,6 +71,8 @@ def convert(
     from ..llamacpp.llamacpp_convert_to_gguf import convert_llama_to_gguf
     from ..train.lora_mlx.convert import convert_between_mlx_and_pytorch
     from ..train.lora_mlx.fuse import fine_tune
+
+    model_dir = os.path.expandvars(os.path.expanduser(model_dir))
 
     # compute model name from model-dir if not supplied
     if model_name is None:
@@ -91,8 +100,9 @@ def convert(
         )
         raise click.exceptions.Exit(1)
 
-    logger.info(f"deleting {source_model_dir}...")
-    shutil.rmtree(source_model_dir)
+    if not keep_files:
+        logger.info(f"deleting {source_model_dir}...")
+        shutil.rmtree(source_model_dir)
 
     model_dir_fused_pt = f"{model_name}-trained"
     # this converts MLX to PyTorch
@@ -100,8 +110,9 @@ def convert(
         hf_path=model_dir_fused, mlx_path=model_dir_fused_pt, local=True, to_pt=True
     )
 
-    logger.info(f"deleting {model_dir_fused}...")
-    shutil.rmtree(model_dir_fused)
+    if not keep_files:
+        logger.info(f"deleting {model_dir_fused}...")
+        shutil.rmtree(model_dir_fused)
 
     convert_llama_to_gguf(
         model=Path(model_dir_fused_pt),
@@ -110,9 +121,10 @@ def convert(
         outfile=f"{model_dir_fused_pt}/{model_name}.gguf",
     )
 
-    logger.info(f"deleting safetensors files from {model_dir_fused_pt}...")
-    for file in glob(os.path.join(model_dir_fused_pt, "*.safetensors")):
-        os.remove(file)
+    if not keep_files:
+        logger.info(f"deleting safetensors files from {model_dir_fused_pt}...")
+        for file in glob(os.path.join(model_dir_fused_pt, "*.safetensors")):
+            os.remove(file)
 
     # quantize to 4-bit GGUF (optional)
     if not skip_quantize:
@@ -120,5 +132,6 @@ def convert(
         gguf_model_q_dir = f"{model_dir_fused_pt}/{model_name}-Q4_K_M.gguf"
         run_quantize(gguf_model_dir, gguf_model_q_dir, "Q4_K_M")
 
-    logger.info(f"deleting {model_dir_fused_pt}/{model_name}.gguf...")
-    os.remove(os.path.join(model_dir_fused_pt, f"{model_name}.gguf"))
+    if not keep_files:
+        logger.info(f"deleting {model_dir_fused_pt}/{model_name}.gguf...")
+        os.remove(os.path.join(model_dir_fused_pt, f"{model_name}.gguf"))

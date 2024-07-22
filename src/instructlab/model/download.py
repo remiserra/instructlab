@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # Standard
-from os.path import basename, dirname
 import os
 
 # Third Party
@@ -11,14 +10,14 @@ from huggingface_hub import snapshot_download
 import click
 
 # First Party
-from instructlab import configuration as config
-from instructlab import utils
+from instructlab import clickext
+from instructlab.configuration import DEFAULTS
 
 
 @click.command()
 @click.option(
     "--repository",
-    default="instructlab/merlinite-7b-lab-GGUF",  # TODO: add to config.yaml
+    default=DEFAULTS.MERLINITE_GGUF_REPO,  # TODO: add to config.yaml
     show_default=True,
     help="Hugging Face repository of the model to download.",
 )
@@ -30,14 +29,14 @@ from instructlab import utils
 )
 @click.option(
     "--filename",
-    default=basename(config.DEFAULT_MODEL_PATH),
-    show_default=True,
+    default=DEFAULTS.GGUF_MODEL_NAME,
+    show_default="The default model location in the instructlab data directory.",
     help="Name of the model file to download from the Hugging Face repository.",
 )
 @click.option(
     "--model-dir",
-    default=dirname(config.DEFAULT_MODEL_PATH),
-    show_default=True,
+    default=lambda: DEFAULTS.MODELS_DIR,
+    show_default="The default system model location store, located in the data directory.",
     help="The local directory to download the model files into.",
 )
 @click.option(
@@ -47,7 +46,7 @@ from instructlab import utils
     help="User access token for connecting to the Hugging Face Hub.",
 )
 @click.pass_context
-@utils.display_params
+@clickext.display_params
 def download(ctx, repository, release, filename, model_dir, hf_token):
     """Download the model(s) to train"""
     click.echo(f"Downloading model from {repository}@{release} to {model_dir}...")

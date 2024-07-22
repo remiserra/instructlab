@@ -32,6 +32,10 @@ on:
       - 'scripts/basic-workflow-tests.sh'
       - 'scripts/test-data/*'
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   e2e:
     runs-on: ubuntu-gpu
@@ -116,7 +120,7 @@ jobs:
           sudo ls -l /dev/nvidia*
 
       - name: Setup Python 3.11
-        uses: actions/setup-python@82c7e631bb3cdc910f68e0081d67478d79c6982d # v5.1.0
+        uses: actions/setup-python@39cd14951b08e74b54015e9e001cdefcf80e669f # v5.1.1
         with:
           python-version: 3.11
           cache: pip
@@ -150,7 +154,7 @@ jobs:
       - name: Run e2e test
         run: |
           . venv/bin/activate
-          ./scripts/basic-workflow-tests.sh -cm
+          ./scripts/basic-workflow-tests.sh -m
 
       - name: Remove llama-cpp-python from cache
         if: always()

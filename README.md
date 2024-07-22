@@ -92,7 +92,7 @@ For an overview of the full workflow, see the [workflow diagram](./docs/workflow
 
 > **NOTE:** Python 3.12 is currently not supported, because some dependencies don't work on Python 3.12, yet.
 <!-- -->
-> **NOTE:** When installing the `ilab` CLI on macOS, you may have to run the `xcode select --install` command, installing the required packages previously listed.
+> **NOTE:** When installing the `ilab` CLI on macOS, you may have to run the `xcode-select --install` command, installing the required packages previously listed.
 
 ## ✅ Getting started
 
@@ -129,7 +129,7 @@ For an overview of the full workflow, see the [workflow diagram](./docs/workflow
       python3 -m venv --upgrade-deps venv
       source venv/bin/activate
       pip cache remove llama_cpp_python
-      pip install instructlab \
+      pip install instructlab[cpu] \
          --extra-index-url=https://download.pytorch.org/whl/cpu \
          -C cmake.args="-DLLAMA_NATIVE=off"
       ```
@@ -148,7 +148,7 @@ For an overview of the full workflow, see the [workflow diagram](./docs/workflow
       python3 -m venv --upgrade-deps venv
       source venv/bin/activate
       pip cache remove llama_cpp_python
-      pip install instructlab \
+      pip install instructlab[rocm] \
          --extra-index-url https://download.pytorch.org/whl/rocm6.0 \
          -C cmake.args="-DLLAMA_HIPBLAS=on" \
          -C cmake.args="-DAMDGPU_TARGETS=all" \
@@ -162,13 +162,14 @@ For an overview of the full workflow, see the [workflow diagram](./docs/workflow
 
    #### Install with Apple Metal on M1/M2/M3 Macs
 
-      > **NOTE**: Make sure your system Python build is `Mach-O 64-bit executable arm64` by using `file -b $(command -v python)`.
+      > **NOTE**: Make sure your system Python build is `Mach-O 64-bit executable arm64` by using `file -b $(command -v python)`,
+      > or if your system is setup with [pyenv](https://github.com/pyenv/pyenv) by using the `file -b $(pyenv which python)` command.
 
       ```shell
       python3 -m venv --upgrade-deps venv
       source venv/bin/activate
       pip cache remove llama_cpp_python
-      pip install instructlab
+      pip install instructlab[mps]
       ```
 
    #### Install with Nvidia CUDA
@@ -177,7 +178,7 @@ For an overview of the full workflow, see the [workflow diagram](./docs/workflow
       python3 -m venv --upgrade-deps venv
       source venv/bin/activate
       pip cache remove llama_cpp_python
-      pip install instructlab \
+      pip install instructlab[cuda] \
          -C cmake.args="-DLLAMA_CUDA=on" \
          -C cmake.args="-DLLAMA_NATIVE=off"
    ```
@@ -555,8 +556,6 @@ The model can also be downloaded and served locally.
    ```shell
    ilab model test
    ```
-
-   > **NOTE:** 🍎 This step is only implemented for macOS with M-series chips (for now)
 
    The output from the command will consist of a series of outputs from the model before and after training.
 

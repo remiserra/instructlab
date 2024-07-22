@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 [build-system]
-requires = ["setuptools>=64", "setuptools_scm>=8"]
+requires = ["setuptools>=70.1.0", "setuptools_scm>=8", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -45,8 +45,11 @@ package-dir = { "" = "src" }
 
 [tool.setuptools.dynamic]
 dependencies = { file = ["requirements.txt"] }
-optional-dependencies.hpu = { file = ["requirements-hpu.txt"] }
-optional-dependencies.vllm-cuda = { file = ["requirements-vllm-cuda.txt"] }
+optional-dependencies.cpu = { file = ["requirements/cpu.txt"] }
+optional-dependencies.cuda = { file = ["requirements/cuda.txt"] }
+optional-dependencies.hpu = { file = ["requirements/hpu.txt"] }
+optional-dependencies.mps = { file = ["requirements/mps.txt"] }
+optional-dependencies.rocm = { file = ["requirements/rocm.txt"] }
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -68,7 +71,7 @@ include = [
 ignore = ["W002"]
 
 [tool.ruff]
-target-version = "py39"
+target-version = "py310"
 # same as black's default line length
 line-length = 88
 
@@ -76,24 +79,35 @@ line-length = 88
 # Allow fix for all enabled rules (when `--fix`) is provided.
 fixable = ["ALL"]
 unfixable = []
+# modern type annotations
+extend-safe-fixes = ["UP006", "UP007"]
 
 # Fixers will be enabled gradually.
 select = [
-  # "B",  # flake8-bugbear
-  # "E",  # pycodestyle
-  # "F",  # Pyflakes
+  "B", # flake8-bugbear
+  "E", # pycodestyle
+  "F", # Pyflakes
   "Q", # flake8-quotes
   # Ruff does not support isort's import_headings feature, yet.
-  # "I",  # isort
+  # "I",   # isort
   # "UP",  # pyupgrade
-  # "SIM",  # flake8-simplify
+  "SIM", # flake8-simplify
   "TID", # flake8-tidy-imports
 ]
 ignore = [
+  "B904", # TODO: "raise from err" or "raise from None"
   # some embedded strings are longer than 88 characters
   "E501",   # line too long
+  "SIM108", # Use ternary operator
+  "SIM102", # Use a single if instead of nested if
   "TID252", # Prefer absolute imports over relative imports from parent modules
 ]
+
+[tool.ruff.lint.per-file-ignores]
+# vendored files, maintained externally
+"src/instructlab/llamacpp/llamacpp_convert_to_gguf.py" = ["ALL"]
+"src/instructlab/mlx_explore/**" = ["ALL"]
+"src/instructlab/train/lora_mlx/**" = ["ALL"]
 
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
 "yamllint".msg = "yamllint is for CLI usage only."
@@ -110,25 +124,19 @@ from-first = true
 known-local-folder = ["tuning"]
 
 [tool.mypy]
-disable_error_code = ["import-not-found", "import-untyped"]
+mypy_path = ["src"]
+packages = ["instructlab", "tests"]
+disable_error_code = []
+# TODO: tighten MyPy checks by enabling these checks over time.
+check_untyped_defs = false
+disallow_incomplete_defs = false
+disallow_untyped_defs = false
+warn_return_any = true
+# honor excludes by not following there through imports
+follow_imports = "silent"
 exclude = [
-  "^src/instructlab/model/chat\\.py$",
-  "^src/instructlab/model/convert\\.py$",
-  "^src/instructlab/model/download\\.py$",
-  "^src/instructlab/model/test\\.py$",
-  "^src/instructlab/model/serve\\.py$",
-  "^src/instructlab/model/list\\.py$",
-  "^src/instructlab/model/model\\.py$",
-  "^src/instructlab/model/train\\.py$",
-  "^src/instructlab/model/evaluate\\.py$",
-  "^src/instructlab/config/config\\.py$",
-  "^src/instructlab/config/init\\.py$",
-  "^src/instructlab/data/data\\.py$",
-  "^src/instructlab/data/generate\\.py$",
-  "^src/instructlab/data/generator/generate_data\\.py$",
-  "^src/instructlab/data/generator/utils\\.py$",
-  "^src/instructlab/taxonomy/taxonomy\\.py$",
-  "^src/instructlab/taxonomy/diff\\.py$",
+  # These are files that were copied from the original codebase.
+  # We are trying to keep changes to a minimum.
   "^src/instructlab/llamacpp/llamacpp_convert_to_gguf\\.py$",
   "^src/instructlab/mlx_explore/gguf_convert_to_mlx\\.py$",
   "^src/instructlab/mlx_explore/utils\\.py$",
@@ -136,10 +144,44 @@ exclude = [
   "^src/instructlab/train/lora_mlx/models/llama\\.py$",
   "^src/instructlab/train/lora_mlx/models/mixtral\\.py$",
   "^src/instructlab/train/lora_mlx/models/models\\.py$",
-  "^src/instructlab/utils\\.py$",
-  "^src/instructlab/model/backends/llama_cpp\\.py$",
-  "^src/instructlab/model/backends/vllm\\.py$",
-  "^src/instructlab/model/backends/backends\\.py$",
 ]
-# honor excludes by not following there through imports
-follow_imports = "silent"
+
+[[tool.mypy.overrides]]
+# packages without typing annotations, without stubs, or not available.
+module = [
+  "click_didyoumean",
+  "datasets",
+  "fire",
+  "gitdb",
+  "habana_frameworks.torch",
+  "huggingface_hub.*",
+  "instructlab.eval.*",
+  "instructlab_quantize",
+  "instructlab.training",
+  "mlx.*",
+  "optimum.habana.*",
+  "sentencepiece",
+  "trl",
+  "transformers",
+]
+ignore_missing_imports = true
+
+[tool.coverage.run]
+branch = false
+relative_files = true
+source = ["instructlab", "tests/"]
+omit = [
+  # omit instructlab code in different packages
+  "*/instructlab/dolomite/*",
+  "*/instructlab/eval/*",
+  "*/instructlab/schema/*",
+  "*/instructlab/sdg/*",
+  "*/instructlab/training/*",
+]
+
+[tool.coverage.paths]
+source = ["src/instructlab", "*.tox/*/lib*/python*/site-packages/instructlab"]
+tests = ["tests/"]
+
+[tool.coverage.report]
+exclude_lines = ["@abc.abstractmethod", "if typing.TYPE_CHECKING"]
