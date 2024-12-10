@@ -6,6 +6,10 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 # https://huggingface.co/docs/transformers/v4.42.0/en/peft
 
 # setup
+
+# /Users/serra/Library/Caches/instructlab/checkpoints/instructlab-granite-7b-lab-mlx-q-fused
+# /Users/serra/Documents/Dev/watsonx-ai/instructlab/instructlab-granite-7b-lab-trained
+
 model_dir = "instructlab-merlinite-7b-lab-mlx-q-fused"
 
 # load fused model
